@@ -1,29 +1,20 @@
 # Production-Grade Agentic AI System
-# 生产级 Agentic AI 系统
 
 Modern **agentic AI systems**, whether running in **development, staging, or production**, are built as a **set of well-defined architectural layers** rather than a single service. Each layer is responsible for a specific concern such as **agent orchestration, memory management, security controls, scalability, and fault handling**. A production-grade agentic system typically combines these layers to ensure agents remain reliable, observable, and safe under real-world workloads.
-现代的**智能体 AI 系统**，无论运行在**开发、预发布还是生产**环境中，通常都不是单个服务，而是由一组**定义清晰的架构层**构成。每一层负责特定职责，例如**智能体编排、记忆管理、安全控制、可扩展性和故障处理**。生产级的智能体系统通常会将这些层组合起来，以确保智能体在真实工作负载下仍然保持可靠、可观测且安全。
 
 ![Production Grade Agentic System](https://miro.medium.com/v2/resize:fit:2560/1*GB6tXauVBaHVGDE4L_FkYg.png)
 *Production Grade Agentic System (Created by Fareed Khan)*
-*生产级 Agentic System（由 Fareed Khan 创建）*
 
 There are **two key aspects** that must be continuously monitored in an agentic system.
-在智能体系统中，需要持续监控**两个关键方面**。
 
 1.  The first is **agent behavior**, which includes reasoning accuracy, tool usage correctness, memory consistency, safety boundaries, and context handling across multiple turns and agents.
-1.  第一是**智能体行为**，包括推理准确性、工具使用正确性、记忆一致性、安全边界，以及跨多轮和多智能体的上下文处理。
 2.  The second is **system reliability and performance**, covering latency, availability, throughput, cost efficiency, failure recovery, and dependency health across the entire architecture.
-2.  第二是**系统可靠性与性能**，涵盖延迟、可用性、吞吐量、成本效率、故障恢复，以及整个架构中的依赖健康状况。
 
 Both are important for operating **multi-agent systems** reliably at scale.
-两者对于在规模化场景下可靠运行**多智能体系统**都很重要。
 
 In this blog, we will build all the core architectural layers needed to deploy a production-ready agentic system, **so teams can confidently deploy AI agents in their own infrastructure or for their clients.**
-在这篇博客中，我们将构建部署生产级智能体系统所需的所有核心架构层，**以便团队能够自信地在自己的基础设施中，或为客户部署 AI 智能体。**
 
 You can clone the repo:
-你可以克隆该仓库：
 
 ```bash
 git clone https://github.com/FareedKhan-dev/production-grade-agentic-system
@@ -31,88 +22,49 @@ cd production-grade-agentic-system
 ```
 
 ## Table of Content
-## 目录
 
 *   [Creating Modular Codebase](#ab61)
-    创建模块化代码库
     *   [Managing Dependencies](#d7f1)
-        管理依赖
     *   [Setting Environment Configuration](#dfa0)
-        设置环境配置
     *   [Containerization Strategy](#66e6)
-        容器化策略
 *   [Building Data Persistence Layer](#c31d)
-    构建数据持久化层
     *   [Structured Modeling](#49d1)
-        结构化建模
     *   [Entity Definition](#da20)
-        实体定义
     *   [Data Transfer Objects (DTOs)](#0bdf)
-        数据传输对象（DTO）
 *   [Security & Safeguards Layer](#1942)
-    安全与防护层
     *   [Rate Limiting Feature](#1649)
-        限流功能
     *   [Sanitization Check Logic](#ed53)
-        净化检查逻辑
     *   [Context Management](#2115)
-        上下文管理
 *   [The Service Layer for AI Agents](#9ef9)
-    面向 AI 智能体的服务层
     *   [Connection Pooling](#c497)
-        连接池
     *   [LLM Unavailability Handling](#2fe7)
-        LLM 不可用处理
     *   [Circuit Breaking](#0d26)
-        熔断
 *   [Multi-Agentic Architecture](#2767)
-    多智能体架构
     *   [Long-Term Memory Integration](#097b)
-        长期记忆集成
     *   [Tool Calling Feature](#6f9a)
-        工具调用功能
 *   [Building The API Gateway](#458a)
-    构建 API 网关
     *   [Auth Endpoints](#8a02)
-        认证端点
     *   [Real-Time Streaming](#0d8e)
-        实时流式传输
 *   [Observability & Operational Testing](#86b1)
-    可观测性与运维测试
     *   [Creating Metrics to Evaluate](#0055)
-        创建评估指标
     *   [Middleware Based Testing](#9c23)
-        基于中间件的测试
     *   [Streaming Endpoints Interaction](#47b1)
-        流式端点交互
     *   [Context Management Using Async](#5e3d)
-        使用异步的上下文管理
     *   [DevOps Automation](#1b72)
-        DevOps 自动化
 *   [Evaluation Framework](#ff63)
-    评估框架
     *   [LLM-as-a-Judge](#9e4a)
-        LLM 作为裁判
     *   [Automated Grading](#e936)
-        自动评分
 *   [Architecture Stress Testing](#f484)
-    架构压力测试
     *   [Simulating our Traffic](#8f52)
-        模拟流量
     *   [Performance Analysis](#0703)
-        性能分析
 
 ## <a id="ab61"></a>Creating Modular Codebase
-## <a id="ab61"></a>创建模块化代码库
 
 Normally, Python projects start small and gradually become messy as they grow. When building production-grade systems, developers typically adopt a **Modular Architecture** approach.
-通常，Python 项目一开始很小，随着规模增长往往会逐渐变得杂乱。构建生产级系统时，开发者通常会采用**模块化架构**方法。
 
 This means separating different components of the application into distinct modules. By doing so, it becomes easier to maintain, test, and update individual parts without impacting the entire system.
-这意味着将应用程序的不同组件拆分到独立的模块中。这样就更容易维护、测试和更新各个部分，而不会影响整个系统。
 
 Let’s create a structured directory layout for our AI system:
-让我们为这个 AI 系统创建一个结构化的目录布局：
 
 ```bash
 ├── app/                         # Main Application Source Code
@@ -140,17 +92,12 @@ Let’s create a structured directory layout for our AI system:
 ```
 
 **This directory structure might seem complex to you at first but we are following a generic best-practice pattern** that is used in many agentic systems or even in pure software engineering. Each folder has a specific purpose:
-**这个目录结构一开始可能会让你觉得复杂，但我们遵循的是一种通用的最佳实践模式**，这种模式在许多智能体系统甚至纯软件工程中都被采用。每个文件夹都有其特定用途：
 
 *   `app/`: Contains the main application code, including API routes, core logic, database models, and utility functions.
-*   `app/`: 包含主应用代码，包括 API 路由、核心逻辑、数据库模型和工具函数。
 *   `evals/`: Houses the evaluation framework for assessing AI performance using various metrics and prompts
-*   `evals/`: 包含用于通过各种指标和提示评估 AI 性能的评估框架。
 *   `grafana/` and `prometheus/`: Store configuration files for monitoring and observability tools.
-*   `grafana/` 和 `prometheus/`: 存放监控和可观测性工具的配置文件。
 
 You can see many components have their own subfolders (like `langgraph/` and `tools/`) to further separate concerns. We are going to build out each of these modules step-by-step in the upcoming sections and also understand why each part is important.
-你可以看到，许多组件都有自己的子文件夹（例如 `langgraph/` 和 `tools/`），以进一步分离职责。接下来我们将逐步构建这些模块，并理解每一部分的重要性。
 
 ### <a id="d7f1"></a>**Managing Dependencies**
 
