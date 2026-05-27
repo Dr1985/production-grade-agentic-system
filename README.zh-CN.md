@@ -2914,6 +2914,8 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         start_time = time.time()
         
+        #try....finally的核心奥义只有一句话：无论 try 代码块里是顺利执行完毕、中途报错崩溃，还是提前 return 了，
+        #finally 代码块里的代码都“绝对保证”会被执行。
         try:
             # Process the actual request
             response = await call_next(request)
@@ -2938,11 +2940,18 @@ class MetricsMiddleware(BaseHTTPMiddleware):
                     status=status_code
                 ).inc()
                 
+                
                 http_request_duration_seconds.labels(
                     method=request.method, 
                     endpoint=request.url.path
-                ).observe(duration)
-
+                ).observe(duration) 
+#这段代码用于**记录一次 HTTP 请求的耗时指标**。`http_request_duration_seconds` 通常是一个 Prometheus 的 Histogram 
+# 或 Summary 指标对象。`labels(method=request.method, endpoint=request.url.path)` 给这次观测打上标签，
+# 表示按请求方法（如 GET、POST）和请求路径（如 `/chat`、`/health`）分类统计。随后 `.observe(duration)` 把
+# 本次请求实际耗时 `duration`（单位通常是秒）写入指标。这样监控系统就能按接口和方法聚合分析延迟分布，比如平均响应时间、
+# P95、P99、慢请求数量等。最终这些数据可被 Prometheus 抓取，再通过 Grafana 展示成监控图表，用于性能分析、容量评估和异常告警。
+# 这是后端服务中非常常见的可观测性埋点写法。
+                
 # ==================================================
 # Logging Context Middleware
 # ==================================================
@@ -2959,6 +2968,7 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
             # Note: We don't validate the token here (Auth Dependency does that),
             # we just want to extract IDs for logging purposes if possible.
             auth_header = request.headers.get("authorization")
+            #if auth_header的意思是：检查 auth_header 这个变量是不是空的（None）。
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ")[1]
                 try:
@@ -2967,6 +2977,9 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
                     payload = jwt.get_unverified_claims(token)
                     subject = payload.get("sub")
                     
+                    #bind_context是将变量挂载（注册）到当前请求的隐形环境中
+                    #在这里的意思就是，如果上一步成功拿到了jwt里面的sub字段
+                    #就把这个sub字段挂载（注册）到当前http请求的上下文环境中，命名为subject_id。
                     if subject:
                         bind_context(subject_id=subject)
                         
@@ -3007,6 +3020,7 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
 
 首先，设置导入并初始化智能体。注意我们在模块级别初始化 `LangGraphAgent`。这确保我们不会在每个请求时重新构建图，否则会造成严重的性能问题。
 
+居博祥：下面这个代码里面用到的LangGraphAgent在workflow.py里面
 ```python
 import json
 from typing import List
