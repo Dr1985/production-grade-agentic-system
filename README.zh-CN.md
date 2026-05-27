@@ -1856,6 +1856,7 @@ database_service = DatabaseService()
 依赖单一 AI 模型（如 GPT-4）是一种风险。如果 OpenAI 宕机怎么办？如果触发速率限制怎么办？生产系统需要**弹性**和**降级回退**机制，以确保高可用性。
 
 ![LLM 检查](https://miro.medium.com/v2/resize:fit:875/1*42G1vS33RD-siCxCnrjFzw.png)
+
 *LLM 检查（由 Fareed Khan 制作）*
 
 我们将在这里实现两种高级模式：
@@ -2119,6 +2120,9 @@ def load_system_prompt(**kwargs) -> str:
         )
 ```
 
+`**kargs`从哪来？写另外的make_kargs()函数，可以把有关的参数打包，然后传进`**kargs`里面，
+这个make_kargs()函数可以找到基于每个用户对话历史的长期记忆。
+
 许多现代 AI 智能体需要与外部系统交互才能真正发挥作用。我们将这些能力定义为**工具**。让我们赋予智能体使用 `DuckDuckGo` 搜索互联网的能力——它比 Google 更安全且更注重隐私。
 
 ### <a id="6f9a"></a>工具调用功能
@@ -2197,6 +2201,8 @@ class LangGraphAgent:
     async def _long_term_memory(self) -> AsyncMemory:
         """
         Lazy-load the mem0ai memory client with pgvector configuration.
+        在这段代码里使用 async def，是为了在连接向量数据库和外部模型服务这种必然发生网络延迟的环节，
+        主动交出 CPU 的控制权，不让系统“傻等”，从而让你的 LangGraph Agent 能够同时顺滑地服务大量用户。
         """
         if self.memory is None:
             self.memory = await AsyncMemory.from_config(
@@ -2262,6 +2268,8 @@ class LangGraphAgent:
         try:
             # Invoke LLM (with retries handled by service)
             response_message = await self.llm_service.call(dump_messages(messages))
+            # 具体来说，在编程中说“dump数据”，意思是：把数据从一种复杂、活跃的内部状态（比如内存里的对象），
+            # 像倒水一样，原原本本地“倾倒/输出”成一种简单、静态、易于传输或保存的格式（比如纯文本、字典、JSON）。
             response_message = process_llm_response(response_message)
             # Determine routing: If LLM wants to use a tool, go to 'tool_call', else END.
             if response_message.tool_calls:
@@ -2273,7 +2281,7 @@ class LangGraphAgent:
             
         except Exception as e:
             logger.error("llm_call_node_failed", error=str(e))
-            raise
+            raise  # 原样抛出刚才的错误 e
 
     async def _tool_call(self, state: GraphState) -> Command:
         """
@@ -2281,6 +2289,25 @@ class LangGraphAgent:
         Executes requested tools and returns results back to the chat node.
         """
         outputs = []
+        # **`state.messages`**：这是一个列表（List），里面按顺序保存了整个对话历史的消息对象。比如：
+    
+        #- `[0]`：系统的 System Prompt
+        
+        #- `[1]`：用户说的第一句话
+        
+        #- `[2]`：AI 的第一次回答
+        
+        #- ...
+        
+        #- `[-1]`：**刚刚最新产生的那条消息**。
+        
+        # **`[-1]`**：因为在这个流程中（刚刚经历过 `_chat` 节点），大模型最新生成的回复被追加到了列表的最后面。所以用 `[-1]` 就能准确抓取出**大模型刚刚给出的那条包含工具调用指令的回复**。
+
+        ### 其他倒序索引示例：
+        #- `[-2]`：列表的倒数第二个元素。
+
+        #- `[-3]`：列表的倒数第三个元素。
+        
         for tool_call in state.messages[-1].tool_calls:
             # Execute the tool
             tool_result = await self.tools_by_name[tool_call["name"]].ainvoke(tool_call["args"])
@@ -2305,6 +2332,7 @@ class LangGraphAgent:
         Builds the state graph and attaches the Postgres checkpointer.
         """
         if self._graph is not None:
+            #避免重复劳动
             return self._graph
         graph_builder = StateGraph(GraphState)
         
@@ -2321,6 +2349,12 @@ class LangGraphAgent:
         await checkpointer.setup() # Ensure tables exist
         self._graph = graph_builder.compile(checkpointer=checkpointer)
         return self._graph
+    
+    
+    
+    
+    #在 Python 的江湖规矩里（PEP 8 规范），函数名以单下划线 _ 开头，
+    #意味着这是“私有方法（Private Method）”或“内部方法”。
 
     # ==================================================
     # Public Methods
@@ -2355,6 +2389,8 @@ class LangGraphAgent:
         # 3. Update Memory in Background (Fire and Forget)
         # We don't want the user to wait for us to save new memories.
         asyncio.create_task(
+            #asyncio.create_task() 就是“把这件事丢给后台去干，
+            #主线程立刻去干下一件事，不耽误时间”。
             self._update_long_term_memory(user_id, final_state["messages"])
         )
         return self._process_messages(final_state["messages"])
@@ -2368,6 +2404,9 @@ class LangGraphAgent:
             logger.error("memory_update_failed", error=str(e))
     def _process_messages(self, messages: list) -> list[Message]:
         """Convert internal LangChain messages back to Pydantic schemas."""
+        #Pydantic是Python中基于类型提示（Type Hints）进行强制数据验证和
+        #格式转换的核心库，它就像代码里的“严格安检员”，确保所有流入系统的数据
+        #都完全符合你预先定义好的规则。
         openai_msgs = convert_to_openai_messages(messages)
         return [
             Message(role=m["role"], content=str(m["content"]))
@@ -2440,6 +2479,9 @@ security = HTTPBearer()
 
 ![认证流程](https://miro.medium.com/v2/resize:fit:875/1*NmVazl_uTgX__Fg-YyVdxg.png)
 *认证流程（由 Fareed Khan 制作）*
+
+注：“Mint” 在英文里是“铸造（硬币）”的意思，在编程里通常指“生成/签发一个新的令牌”。 
+后端会根据用户的信息（比如用户 ID）加上系统的密钥，加密生成一串长长的字符串，这就是 JWT。
 
 当路由声明 `user: User = Depends(get_current_user)` 时，FastAPI 会自动：
 
@@ -2526,7 +2568,10 @@ async def get_current_session(
 我们在这里应用 `limiter`，因为注册端点是垃圾邮件机器人的主要攻击目标。
 
 ![实时流](https://miro.medium.com/v2/resize:fit:875/1*ixpKUpSWC45SExT9kPDegw.png)
+
 *实时流（由 Fareed Khan 制作）*
+
+这个图片疑似放错位置了？
 
 我们还会积极地净化输入，保持数据库的整洁。
 
@@ -2560,6 +2605,32 @@ async def register_user(request: Request, user_data: UserCreate):
     except ValueError as ve:
         logger.warning("registration_validation_failed", error=str(ve))
         raise HTTPException(status_code=422, detail=str(ve))
+```
+
+注册功能状态转移图，居博祥画的
+```mermaid
+stateDiagram-v2
+    [*] --> 接收请求: POST /register
+
+    接收请求 --> 速率限制检查: 触发 @limiter.limit
+    
+    速率限制检查 --> 输入验证: 未超限 (继续执行)
+    速率限制检查 --> 失败_429: 请求过多 (拦截)
+
+    输入验证 --> 存在性检查: 验证通过 (Sanitize & Validate)
+    输入验证 --> 失败_422: 抛出 ValueError (密码太弱或邮箱无效)
+
+    存在性检查 --> 创建用户: 邮箱未注册
+    存在性检查 --> 失败_400: 邮箱已注册 (Raise HTTPException)
+
+    创建用户 --> 生成令牌: 密码哈希完毕并存入DB
+
+    生成令牌 --> 成功: 签发 Access Token
+
+    成功 --> [*]: 返回 UserResponse (200/201)
+    失败_429 --> [*]: 返回 HTTP 429 Too Many Requests
+    失败_422 --> [*]: 返回 HTTP 422 Unprocessable Entity
+    失败_400 --> [*]: 返回 HTTP 400 Bad Request
 ```
 
 接下来是**登录**。标准 OAuth2 流程通常使用表单数据（`username` 和 `password` 字段）而非 JSON 进行登录。我们在此支持这种模式。
@@ -2604,6 +2675,53 @@ async def login(
         raise HTTPException(status_code=422, detail=str(ve))
 ```
 
+
+登录功能的状态转移图，居博祥画的
+```mermaid
+stateDiagram-v2
+    [*] --> 接收请求: POST /login
+
+    %% 速率限制检查 (由装饰器隐式处理)
+    接收请求 --> 速率限制检查: 触发 @limiter.limit
+    
+    state 速率限制检查 <<choice>>
+    速率限制检查 --> 数据预处理: [未超限]
+    速率限制检查 --> 失败_429: [已超限 (框架处理)]
+
+    %% 进入 try 块
+    state 数据预处理 {
+        [*] --> 清理字符串: 调用 sanitize_string
+        清理字符串 --> 检查授权类型
+    }
+
+    state 检查授权类型 <<choice>>
+    检查授权类型 --> 查询用户: [grant_type == "password"]
+    检查授权类型 --> 失败_400: [grant_type != "password"]
+
+    %% 捕获 ValueError (发生在 try 块内的任何地方)
+    数据预处理 --> 失败_422: [捕获 ValueError]
+    查询用户 --> 失败_422: [捕获 ValueError]
+
+    %% 身份验证
+    查询用户 --> 验证凭据: 获取到用户数据
+    
+    state 验证凭据 <<choice>>
+    验证凭据 --> 生成令牌: [密码验证通过]
+    验证凭据 --> 失败_401: [用户不存在 或 密码错误]
+
+    %% 成功路径
+    生成令牌 --> 记录成功日志: 调用 create_access_token
+    记录成功日志 --> 登录成功: 构造 TokenResponse
+
+    %% 最终状态
+    登录成功 --> [*]: 返回 200 OK
+    失败_429 --> [*]: 返回 429 Too Many Requests
+    失败_400 --> [*]: 返回 400 Bad Request
+    失败_422 --> [*]: 返回 422 Unprocessable Entity
+    失败_401 --> [*]: [记录 Warning 日志] 返回 401 Unauthorized
+```
+
+
 最后，我们需要管理**会话**。在我们的 AI 智能体架构中，一个用户可以拥有多个"线程"或"会话"，每个会话都有自己的记忆上下文。
 
 `/session` 端点会生成一个全新的唯一 ID（UUID），在数据库中创建记录，并返回专门针对该会话的令牌。这样前端就可以轻松地在不同聊天线程之间切换。
@@ -2645,6 +2763,43 @@ async def get_user_sessions(user: User = Depends(get_current_user)):
         )
         for s in sessions
     ]
+```
+
+
+居博祥画的获取会话session的状态转移图
+```mermaid
+stateDiagram-v2
+    direction TB
+
+    state "POST /session (创建新会话)" as CreateFlow {
+        direction TD
+        [*] --> 鉴权中 : 接收请求 (Depends)
+        鉴权中 --> 鉴权失败 : Token 无效 / 未授权
+        鉴权中 --> 初始化 : 鉴权通过 (获取 User)
+        
+        初始化 --> 持久化中 : 生成安全的 UUID
+        持久化中 --> 令牌生成中 : 数据库写入成功 (create_session)
+        持久化中 --> 创建异常 : 捕获 Exception (数据库/系统级错误)
+        令牌生成中 --> 会话就绪 : 生成专属 Token (create_access_token)
+        令牌生成中 --> 创建异常 : 捕获 Exception
+        
+        会话就绪 --> [*] : 返回 SessionResponse (200 OK)
+        创建异常 --> [*] : 记录 logger.error 并抛出 500 异常
+        鉴权失败 --> [*] : 抛出 401/403 异常
+    }
+
+    state "GET /sessions (检索会话列表)" as GetFlow {
+        direction TD
+        [*] --> 检索鉴权中 : 接收请求 (Depends)
+        检索鉴权中 --> 检索鉴权失败 : Token 无效 / 未授权
+        检索鉴权中 --> 数据库查询中 : 鉴权通过 (获取 User)
+        
+        数据库查询中 --> 批量令牌重签发中 : 成功获取历史会话 (get_user_sessions)
+        批量令牌重签发中 --> 列表就绪 : 遍历列表并生成新 Token
+        
+        列表就绪 --> [*] : 返回 List[SessionResponse] (200 OK)
+        检索鉴权失败 --> [*] : 抛出 401/403 异常
+    }
 ```
 
 通过以这种方式构建认证系统，我们已经保护了应用程序的入口。每个请求在触及我们的 AI 逻辑之前，都会经过速率限制、净化和密码学验证。
